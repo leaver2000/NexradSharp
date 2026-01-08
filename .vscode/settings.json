@@ -1,0 +1,18 @@
+{
+  "omnisharp.useModernNet": true,
+  "omnisharp.enableEditorConfigSupport": true,
+  "omnisharp.path": "latest",
+  "omnisharp.enableRoslynAnalyzers": true,
+  "omnisharp.solution": "NexradSharp.sln",
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  },
+  "search.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  },
+  "dotnet.completion.showCompletionItemsFromUnimportedNamespaces": true,
+  "dotnet.formatting.organizeImportsOnFormat": true
+}
+

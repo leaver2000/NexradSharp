@@ -1,0 +1,9 @@
+{
+  "Solution": "NexradSharp.sln",
+  "EnableEditorConfigSupport": true,
+  "EnableRoslynAnalyzers": true,
+  "EnableImportCompletion": true,
+  "OrganizeImportsOnFormat": true
+}
+
+
