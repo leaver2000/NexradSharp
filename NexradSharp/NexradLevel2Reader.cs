@@ -17,7 +17,11 @@ namespace NexradSharp;
 /// using var reader = NexradLevel2Reader.Open("KLSX20251229_065156_V06");
 /// var sweeps = reader[..];
 /// var sweep0 = sweeps[0]; // or just reader[0]
-/// var reflectivity = sweep0["DBZH"]; // float[,] array
+/// var reflectivityArray = sweep0[CommonName.DBZH]; // DataArray with data and attributes
+/// var reflectivity = reflectivityArray.Data; // Span2D&lt;ushort&gt; with raw quantized data
+/// var (scale, offset) = reflectivityArray.Attributes; // Scale/offset for dequantization
+/// // Or use convenience methods:
+/// var (scale2, offset2) = sweep0.GetScaleOffset(CommonName.DBZH);
 /// </code>
 /// </example>
 /// <param name="input">The stream to read the NEXRAD file from</param>
@@ -62,20 +66,42 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             var sweep = Message31DataHeaders[index];
             var data = ReadSweepData(sweep);
             var (altitude, rangeStart, rangeScale, timestamp) = ExtractSweepMetadata(sweep);
-            return new NexradLevel2Sweep(data, elangle, altitude, rangeStart, rangeScale, timestamp);
+            return new NexradLevel2Sweep(data, index, 0.0, elangle, rangeScale, rangeStart);
         }
     }
     public NexradLevel2Volume this[IEnumerable<int> indices]
     {
         get
         {
-            var sweepIndices = indices?.ToList() ?? Enumerable.Range(0, Message31DataHeaders.Count).ToList();
-            var data = OpenSweepData(sweepIndices);
-            var metadata = sweepIndices.ToDictionary(
+            ArgumentNullException.ThrowIfNull(indices);
+            var sweepData = OpenSweepData(indices);
+            var indicesList = indices.ToList();
+            var metadata = indicesList.ToDictionary(
                 index => index,
                 index => ExtractSweepMetadata(Message31DataHeaders[index])
             );
-            return new NexradLevel2Volume(data, ElevationAngles, metadata);
+
+            // Extract volume-level metadata from first sweep
+            var firstIndex = indicesList[0];
+            var firstSweep = Message31DataHeaders[firstIndex];
+            var (altitude, _, _, timestamp) = ExtractSweepMetadata(firstSweep);
+            double lat = 0, lon = 0;
+            if (firstSweep.ConstantBlock.Volume != null)
+            {
+                lat = firstSweep.ConstantBlock.Volume.Latitude;
+                lon = firstSweep.ConstantBlock.Volume.Longitude;
+            }
+
+            var sweepRangeInfo = indicesList.ToDictionary(
+                index => index,
+                index =>
+                {
+                    var (_, rangeStart, rangeScale, _) = metadata[index];
+                    return (rangeStart, rangeScale);
+                }
+            );
+
+            return new NexradLevel2Volume(sweepData, timestamp, altitude, lat, lon, ElevationAngles, sweepRangeInfo);
         }
     }
     public NexradLevel2Volume this[Range range]
@@ -84,17 +110,17 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
         {
 
             var messages = Message31DataHeaders;
-            Dictionary<int, Dictionary<string, float[,]>>? data;
+            Dictionary<int, Dictionary<CommonName, Radar.Field>>? sweepData;
             List<int> sweepIndices;
             if (range.Equals(..))
             {
                 sweepIndices = [.. Enumerable.Range(0, messages.Count)];
-                data = OpenSweepData(null);
+                sweepData = OpenSweepData(null);
             }
             else
             {
                 sweepIndices = [.. Enumerable.Range(range.Start.Value, range.End.Value)];
-                data = OpenSweepData(sweepIndices);
+                sweepData = OpenSweepData(sweepIndices);
             }
 
             var elevationAngles = ElevationAngles;
@@ -102,7 +128,27 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                 index => index,
                 index => ExtractSweepMetadata(messages[index])
             );
-            return new NexradLevel2Volume(data, elevationAngles, metadata);
+
+            // Extract volume-level metadata from first sweep
+            var firstSweep = messages[0];
+            var (altitude, _, _, timestamp) = ExtractSweepMetadata(firstSweep);
+            double lat = 0, lon = 0;
+            if (firstSweep.ConstantBlock.Volume != null)
+            {
+                lat = firstSweep.ConstantBlock.Volume.Latitude;
+                lon = firstSweep.ConstantBlock.Volume.Longitude;
+            }
+
+            var sweepRangeInfo = sweepIndices.ToDictionary(
+                index => index,
+                index =>
+                {
+                    var (_, rangeStart, rangeScale, _) = metadata[index];
+                    return (rangeStart, rangeScale);
+                }
+            );
+
+            return new NexradLevel2Volume(sweepData, timestamp, altitude, lat, lon, elevationAngles, sweepRangeInfo);
         }
     }
 
@@ -129,7 +175,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                 if (sweepHeaders.Count > 0)
                 {
                     var firstHeader = sweepHeaders[0];
-                    if (firstHeader is Message31Header header) { elevations.Add(header.ElevationAngle); }
+                    if (firstHeader is RadarDataHeader header) { elevations.Add(header.ElevationAngle); }
                     else { elevations.Add(double.NaN); }
                 }
                 else { elevations.Add(double.NaN); }
@@ -152,15 +198,15 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     }
 
 
-    private static readonly Dictionary<DataName, string> _nexradMapping = new()
+    private static readonly Dictionary<DataName, CommonName> _nexradMapping = new()
     {
-        [DataName.REF] = "DBZH",
-        [DataName.VEL] = "VRADH",
-        [DataName.SW] = "WRADH",
-        [DataName.ZDR] = "ZDR",
-        [DataName.PHI] = "PHIDP",
-        [DataName.RHO] = "RHOHV",
-        [DataName.CFP] = "CCORH",
+        [DataName.REF] = CommonName.DBZH,
+        [DataName.VEL] = CommonName.VRADH,
+        [DataName.SW] = CommonName.WRADH,
+        [DataName.ZDR] = CommonName.ZDR,
+        [DataName.PHI] = CommonName.PHIDP,
+        [DataName.RHO] = CommonName.RHOHV,
+        [DataName.CFP] = CommonName.CCORH,
     };
     // NEXRAD Level II file structures and sizes
     // The details on these structures are documented in:
@@ -176,7 +222,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     // # Table II Message Header Data
     // Message header sizes are now calculated using struct SizeOf properties
     // MessageHeader.SizeOf = 16 bytes
-    // Message31Header has variable size due to BlockPointers array, calculated as: 4 + 4 + 2 + 2 + 4 + 1 + 1 + 2 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 2 + (10 * 4) = 72 bytes
+    // RadarDataHeader has variable size due to BlockPointers array, calculated as: 4 + 4 + 2 + 2 + 4 + 1 + 1 + 2 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 2 + (10 * 4) = 72 bytes
 
     // Helper methods for reading big-endian values
 
@@ -565,8 +611,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                                 MessageType.RDA_ADAPTATION_DATA)) break;
 
             // Create header with metadata
-            var headerWithMeta = new MessageHeaderWithMetadata(
-                message_header,     // Header
+            var headerWithMeta = message_header.With(
                 rec,                // RecordNumber
                 filepos             // FilePosition
             );
@@ -663,11 +708,11 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             // keep all data headers
             dataHeader.Add(msgHeader);
 
-            // Only process Message31 (legacy Message1 format is not supported)
+            // Only process RadarData (legacy Message1 format is not supported)
             if (msgHeader.Type == (byte)MessageType.GENERIC_FORMAT)
             {
                 // Read the full message header (MSG_31)
-                var messagesHeaderObj = (IMessageHeader)ReadMessage31Header();
+                var messagesHeaderObj = (IMessageHeader)ReadRadarDataHeader();
 
                 // retrieve data/const headers from msg 31
                 // check if this is a new sweep
@@ -704,13 +749,13 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                     sweepIntermediateRecords = [];
 
                     // new message 31 data
-                    if (messagesHeaderObj is Message31Header messagesHdr)
+                    if (messagesHeaderObj is RadarDataHeader messagesHdr)
                     {
-                        var (constantBlock, variableBlocks) = ParseMessage31DataBlocks(messagesHdr);
+                        var (constantBlock, variableBlocks) = ParseRadarDataBlocks(messagesHdr);
                         messagesDataHeader.Add(new SweepData(
                             RecordNumber: _recordNumber,
                             FilePosition: _recordStart,
-                            Message31Header: messagesHdr,
+                            RadarDataHeader: messagesHdr,
                             MessageType: (MessageType)msgHeader.Type,
                             ConstantBlock: constantBlock,
                             Message31DataHeader: variableBlocks
@@ -750,7 +795,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     /// Read MSG_31 header after the message header.
     /// Python equivalent: _unpack_dictionary(self._rh.read(msg_len, width=1), msg, ...)
     /// </summary>
-    private IMessageHeader ReadMessage31Header()
+    private RadarDataHeader ReadRadarDataHeader()
     {
         BinaryReader? tempReader = null;
         BinaryReader reader = this;
@@ -778,9 +823,9 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             BaseStream.Position = _recordStart + _recordPos;
         }
 
-        // Only Message31 is supported
-        IMessageHeader header = Message31Header.Read(reader);
-        _recordPos += Message31Header.SizeOf;
+        // Only RadarData is supported
+        var header = RadarDataHeader.Read(reader);
+        _recordPos += RadarDataHeader.SizeOf;
 
         // Clean up temporary reader if we created one
         tempReader?.Dispose();
@@ -792,13 +837,13 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     /// Parse data blocks from Message 31.
     /// Python equivalent: parsing block_pointers and DATA_BLOCK_HEADER
     /// </summary>
-    private (ConstantBlock constantBlock, Dictionary<DataName, DataBlock> variableBlocks) ParseMessage31DataBlocks(Message31Header messagesHeader)
+    private (ConstantBlock constantBlock, Dictionary<DataName, DataBlock> variableBlocks) ParseRadarDataBlocks(RadarDataHeader header)
     {
         var constants = new ConstantBlock(); // VOL, ELV, RAD
         var variables = new Dictionary<DataName, DataBlock>();
-        Console.WriteLine($"messagesHeader: {messagesHeader}");
-        var blockPointers = messagesHeader.BlockPointers.Where(bp => bp > 0).ToArray();
-        var nBlocks = Math.Min(blockPointers.Length, messagesHeader.BlockCount);
+
+        var blockPointers = header.BlockPointers.Where(bp => bp > 0).ToArray();
+        var nBlocks = Math.Min(blockPointers.Length, header.BlockCount);
 
         BinaryReader? tempReader = null;
         BinaryReader reader = this;
@@ -880,8 +925,8 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             throw new InvalidOperationException("No variable blocks found in sweep data");
         }
 
-        // Extract timestamp from Message31Header
-        var messages = sweep.Message31Header;
+        // Extract timestamp from RadarDataHeader
+        var messages = sweep.RadarDataHeader;
 
         var timeMs = ((long)(messages.CollectDate - 1)) * 86400000L + messages.CollectMilliseconds;
         timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timeMs).DateTime;
@@ -894,12 +939,12 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     }
 
     /// <summary>
-    /// Read sweep data (moments) into float[,], shaped (nRays, nGates).
-    /// Applies simple scale/offset: value = (raw - offset) / scale.
+    /// Read sweep data (moments) into Span2D&lt;ushort&gt;, shaped (nRays, nGates).
+    /// Returns raw quantized data without dequantization. Scale and offset are contained within each RadarField.
     /// </summary>
-    private Dictionary<string, float[,]> ReadSweepData(SweepData sweep)
+    private Dictionary<CommonName, Radar.Field> ReadSweepData(SweepData sweep)
     {
-        var result = new Dictionary<string, float[,]>();
+        var result = new Dictionary<CommonName, Radar.Field>();
 
         var dataHeader = sweep.Message31DataHeader;
 
@@ -918,15 +963,21 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             .Where(kvp => kvp.Value is VariableBlock)
             .ToDictionary(kvp => kvp.Key, kvp => (VariableBlock)kvp.Value);
 
-        static string MapMomentName(DataName key)
+        static CommonName MapMomentName(DataName key)
         {
-            return _nexradMapping.TryGetValue(key, out var mapped) ? mapped : key.ToString();
+            return _nexradMapping.TryGetValue(key, out var mapped) ? mapped : throw new ArgumentException($"Unknown DataName: {key}");
         }
 
-        // Prepare per-moment storage
+        // Prepare per-moment storage for raw quantized values
         var momentRows = momentEntries.ToDictionary(
             kvp => MapMomentName(kvp.Key),
-            kvp => new List<float[]>()
+            kvp => new List<ushort[]>()
+        );
+
+        // Store scale/offset for each moment (will be used when creating DataArray)
+        var scaleOffsetMap = momentEntries.ToDictionary(
+            kvp => MapMomentName(kvp.Key),
+            kvp => (kvp.Value.Scale, kvp.Value.Offset)
         );
 
         for (int rec = startRecord; rec <= endRecord; rec++)
@@ -956,8 +1007,6 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                 var ngates = header.NumberOfGates;
                 if (ngates == 0) continue;
                 var wordSize = header.WordSize;
-                var scale = header.Scale;
-                var offset = header.Offset;
                 var dataOffset = header.DataOffset;
 
                 // Position to data offset (relative to record start)
@@ -973,12 +1022,12 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
 
                 reader.BaseStream.Position = absolutePos;
 
-                var ray = new float[ngates];
+                var ray = new ushort[ngates];
                 if (wordSize == 8) // 8-bit unsigned integer
                 {
                     var bytes = reader.ReadBytes(ngates);
                     for (int i = 0; i < ngates; i++)
-                        ray[i] = (bytes[i] - offset) / scale;
+                        ray[i] = bytes[i]; // Store raw quantized value
 
                 }
                 else
@@ -988,8 +1037,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                     {
                         var b1 = reader.ReadByte();
                         var b2 = reader.ReadByte();
-                        var raw = (ushort)((b1 << 8) | b2);
-                        ray[i] = (raw - offset) / scale;
+                        ray[i] = (ushort)((b1 << 8) | b2); // Store raw quantized value
                     }
                 }
                 momentRows[mappedKey].Add(ray);
@@ -1001,22 +1049,23 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             }
         }
 
-        // Convert lists to 2D arrays
+        // Convert lists to Span2D and create RadarField instances with attributes
         foreach (var kvp in momentRows)
         {
             var rows = kvp.Value;
             if (rows.Count == 0) continue;
             var ngates = rows[0].Length;
-            var arr = new float[rows.Count, ngates];
+
+            // Flatten 2D data into 1D array for Span2D
+            var flatData = new List<ushort>();
             for (int r = 0; r < rows.Count; r++)
             {
-                var src = rows[r];
-                for (int c = 0; c < ngates; c++)
-                {
-                    arr[r, c] = src[c];
-                }
+                flatData.AddRange(rows[r]);
             }
-            result[kvp.Key] = arr;
+
+            var span2D = new Span2D<ushort>(flatData, rows.Count, ngates);
+            var attributes = scaleOffsetMap[kvp.Key];
+            result[kvp.Key] = new Radar.Field(span2D, attributes);
         }
 
         return result;
@@ -1049,7 +1098,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
         }
 
         // Extract timestamp from first message header
-        var messages = firstSweep.Message31Header;
+        var messages = firstSweep.RadarDataHeader;
         var timeMs = ((long)(messages.CollectDate - 1)) * 86400000L + messages.CollectMilliseconds;
         timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timeMs).DateTime;
 
@@ -1063,7 +1112,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             {
                 continue;
             }
-            if (messagesHeader[index][0] is not Message31Header header)
+            if (messagesHeader[index][0] is not RadarDataHeader header)
             {
                 continue;
             }
@@ -1079,10 +1128,10 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                 // Variable blocks are REF, VEL, SW, ZDR, PHI, RHO, CFP
                 if (value is VariableBlock)
                 {
-                    // Map NEXRAD names to CfRadial2/ODIM names
+                    // Map NEXRAD names to CommonName enum
                     if (_nexradMapping.ContainsKey(key))
                     {
-                        quantities.Add(_nexradMapping[key]);
+                        quantities.Add(_nexradMapping[key].ToString());
                     }
                     else
                     {
@@ -1129,7 +1178,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             }
 
             // Extract id from the first MSG_31 header
-            if (messages[0][0] is Message31Header firstHeader)
+            if (messages[0][0] is RadarDataHeader firstHeader)
             {
                 var id = firstHeader.Id?.TrimEnd('\0', ' ').ToUpperInvariant() ?? "";
                 if (string.IsNullOrWhiteSpace(id))
@@ -1139,7 +1188,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                 return id;
             }
 
-            throw new InvalidDataException("First header in first sweep is not a Message31Header");
+            throw new InvalidDataException("First header in first sweep is not a RadarDataHeader");
         }
         catch (Exception ex) when (ex is not InvalidDataException)
         {
@@ -1158,15 +1207,13 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     }
     /// <summary>
     /// Load sweep data arrays shaped (nRay, nBin) per variable.
-    /// Returns Dictionary: index -> { variableName -> float[,] }.
+    /// Returns Dictionary: index -> data where data is CommonName -> RadarField.
     /// </summary>
-    private Dictionary<int, Dictionary<string, float[,]>> OpenSweepData(in IEnumerable<int>? sweeps = null)
+    private Dictionary<int, Dictionary<CommonName, Radar.Field>> OpenSweepData(in IEnumerable<int>? sweeps = null)
     {
         var messages = Message31DataHeaders;
 
-        // var sweepIndices = sweeps != null && sweeps.Any() ? sweeps : [.. Enumerable.Range(0, messages.Count)];
-
-        var result = new Dictionary<int, Dictionary<string, float[,]>>();
+        var result = new Dictionary<int, Dictionary<CommonName, Radar.Field>>();
         foreach (var i in sweeps ?? Enumerable.Range(0, messages.Count))
         {
             if (i >= messages.Count) continue;

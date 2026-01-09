@@ -27,7 +27,7 @@ public class NexradLevel2ReaderAccessorTests
             Console.WriteLine(" TS | EL | Alt | start | scale | Key | NRays | NBins");
             foreach (var (k, v) in sweep)
             {
-                Console.WriteLine($"{sweep.Timestamp:yyyy-MM-dd HH:mm:ss} {sweep.ElevationAngle:F2}  {sweep.Altitude}   {sweep.RangeStart}     {sweep.RangeScale}    {k} {v.GetLength(0)} {v.GetLength(1)}");
+                Console.WriteLine(sweep);
             }
         }
 
