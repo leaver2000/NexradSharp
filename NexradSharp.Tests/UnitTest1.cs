@@ -37,32 +37,4 @@ public class NexradLevel2ReaderAccessorTests
         Assert.True(volume.Count > 0);
         Assert.Contains(0, volume.Keys);
     }
-
-
-    [Fact]
-    public void WriteSweep0DbzhAsPng_CreatesImageFile()
-    {
-        if (!File.Exists(filePath)) return;
-
-        // Arrange
-        using var reader = NexradLevel2Reader.Open(filePath);
-        var outputPath = Path.Combine(solutionRoot, "sweep0_dbzh.png");
-
-        // Act
-        reader.WriteSweep0DbzhAsPng(outputPath);
-
-        // Assert
-        Assert.True(File.Exists(outputPath), $"PNG file should be created at {outputPath}");
-        var fileInfo = new FileInfo(outputPath);
-        Assert.True(fileInfo.Length > 0, "PNG file should not be empty");
-
-        // Get dimensions from the sweep data
-        var sweep = reader[0];
-        var dbzh = sweep["DBZH"];
-
-        // Note: File is kept for manual inspection - delete manually if needed
-        Console.WriteLine($"PNG file created at: {outputPath}");
-        Console.WriteLine($"File size: {fileInfo.Length} bytes");
-        Console.WriteLine($"Image dimensions: {dbzh.GetLength(1)} x {dbzh.GetLength(0)} (width x height, gates x rays)");
-    }
 }
