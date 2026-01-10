@@ -33,7 +33,7 @@ public enum DataName : byte
     RHO,
     CFP,
 }
-public enum CommonName
+public enum FieldName
 {
     DBZH,
     VRADH,
@@ -88,7 +88,7 @@ public enum MessageType : byte
     /// <summary>
     /// Metadata message type.
     /// </summary>
-    Metadata = 0,
+    METADATA = 0,
     /// <summary>
     /// Digital Radar Data (Legacy Format)
     /// </summary>

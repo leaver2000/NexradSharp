@@ -1,8 +1,12 @@
-using System.Buffers.Binary;
+
 using System.Runtime.InteropServices;
 using System.Text;
 
+
 namespace NexradSharp;
+
+using static System.Buffers.Binary.BinaryPrimitives;
+
 
 public interface IMessageHeader { public SweepStatus GetStatus(); }
 
@@ -11,7 +15,7 @@ public interface IMessageHeader { public SweepStatus GetStatus(); }
 public readonly struct MessageHeader(
     ushort size,
     byte channels,
-    byte type,
+    MessageType type,
     ushort sequenceId,
     ushort date,
     uint milliseconds,
@@ -21,7 +25,7 @@ public readonly struct MessageHeader(
 {
     public readonly ushort Size = size;
     public readonly byte Channels = channels;
-    public readonly byte Type = type;
+    public readonly MessageType Type = type;
     public readonly ushort SequenceId = sequenceId;
     public readonly ushort Date = date;
     public readonly uint Milliseconds = milliseconds;
@@ -29,19 +33,18 @@ public readonly struct MessageHeader(
     public readonly ushort SegmentNumber = segmentNumber;
     public const int SizeOf = 16;
     public MessageHeader(Span<byte> span) : this(
-        BinaryPrimitives.ReadUInt16BigEndian(span[..2]),    //  Size
-        span[2],                                            // Channels
-        span[3],                                            // Type
-        BinaryPrimitives.ReadUInt16BigEndian(span[4..6]),   // SequenceId
-        BinaryPrimitives.ReadUInt16BigEndian(span[6..8]),   // Date
-        BinaryPrimitives.ReadUInt32BigEndian(span[8..12]),  // Milliseconds
-        BinaryPrimitives.ReadUInt16BigEndian(span[10..12]), // Segments
-        BinaryPrimitives.ReadUInt16BigEndian(span[12..14])  // SegmentNumber
+        ReadUInt16BigEndian(span[..2]),    //  Size
+        span[2],                           // Channels
+        (MessageType)span[3],              // Type
+        ReadUInt16BigEndian(span[4..6]),   // SequenceId
+        ReadUInt16BigEndian(span[6..8]),   // Date
+        ReadUInt32BigEndian(span[8..12]),  // Milliseconds
+        ReadUInt16BigEndian(span[10..12]), // Segments
+        ReadUInt16BigEndian(span[12..14])  // SegmentNumber
     )
     { }
     public MessageHeader(byte[] bytes) : this(bytes.AsSpan()) { }
     public static MessageHeader Read(BinaryReader reader) => new(reader.ReadBytes(SizeOf));
-
     public MessageHeaderWithMetadata With(int recordNumber, long filePosition) => new(this, recordNumber, filePosition);
 }
 
@@ -56,8 +59,8 @@ public readonly struct MessageHeaderWithMetadata(MessageHeader header, int recor
 
     public MessageHeaderWithMetadata(Span<byte> span) : this(
         header: new MessageHeader(span[..MessageHeader.SizeOf]),
-        recordNumber: BinaryPrimitives.ReadInt32BigEndian(span[MessageHeader.SizeOf..(MessageHeader.SizeOf + 4)]),
-        filePosition: BinaryPrimitives.ReadInt64BigEndian(span[(MessageHeader.SizeOf + 4)..(MessageHeader.SizeOf + 12)])
+        recordNumber: ReadInt32BigEndian(span[MessageHeader.SizeOf..(MessageHeader.SizeOf + 4)]),
+        filePosition: ReadInt64BigEndian(span[(MessageHeader.SizeOf + 4)..(MessageHeader.SizeOf + 12)])
     )
     { }
     public MessageHeaderWithMetadata(byte[] bytes) : this(bytes.AsSpan()) { }
@@ -66,8 +69,9 @@ public readonly struct MessageHeaderWithMetadata(MessageHeader header, int recor
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public struct RadarDataHeader : IMessageHeader
 {
-    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
-    private readonly byte[] _idBytes;
+    // [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
+    // private readonly byte[] _idBytes;
+    public string Id;
     public uint CollectMilliseconds;
     public ushort CollectDate;
     public ushort AzimuthNumber;
@@ -76,7 +80,7 @@ public struct RadarDataHeader : IMessageHeader
     public byte Spare0;
     public ushort RadialLength;
     public byte AzimuthResolution;
-    public byte RadialStatus;
+    public SweepStatus RadialStatus;
     public byte ElevationNumber;
     public byte CutSector;
     public float ElevationAngle;
@@ -87,14 +91,14 @@ public struct RadarDataHeader : IMessageHeader
     private readonly uint[] _blockPointers;
     public const int SizeOf = 72;
 
-    public readonly string Id
-    {
-        get
-        {
-            if (_idBytes == null) return string.Empty;
-            return Encoding.ASCII.GetString(_idBytes, 0, 4).TrimEnd('\0');
-        }
-    }
+    // public readonly string Id
+    // {
+    //     get
+    //     {
+    //         if (_idBytes == null) return string.Empty;
+    //         return Encoding.ASCII.GetString(_idBytes, 0, 4).TrimEnd('\0');
+    //     }
+    // }
 
     public readonly uint[] BlockPointers
     {
@@ -108,7 +112,7 @@ public struct RadarDataHeader : IMessageHeader
     }
 
 
-    public readonly SweepStatus GetStatus() => (SweepStatus)RadialStatus;
+    public readonly SweepStatus GetStatus() => RadialStatus;
 
 
 
@@ -130,30 +134,22 @@ public struct RadarDataHeader : IMessageHeader
     {
         if (span.Length != SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
-
-        // int offset = 0;
-
-        // Read ID (4 bytes ASCII)
-        _idBytes = new byte[4];
-        span[0..4].CopyTo(_idBytes);
-
-        CollectMilliseconds = BinaryPrimitives.ReadUInt32BigEndian(span[4..8]);
-        CollectDate = BinaryPrimitives.ReadUInt16BigEndian(span[8..10]);
-        AzimuthNumber = BinaryPrimitives.ReadUInt16BigEndian(span[10..12]);
-        AzimuthAngle = BinaryPrimitives.ReadSingleBigEndian(span[12..16]);
+        Id = Encoding.ASCII.GetString(span[0..4]).TrimEnd('\0');
+        CollectMilliseconds = ReadUInt32BigEndian(span[4..8]);
+        CollectDate = ReadUInt16BigEndian(span[8..10]);
+        AzimuthNumber = ReadUInt16BigEndian(span[10..12]);
+        AzimuthAngle = ReadSingleBigEndian(span[12..16]);
         CompressFlag = span[16];
         Spare0 = span[17];
-        RadialLength = BinaryPrimitives.ReadUInt16BigEndian(span[18..20]);
-        // offset += 2;
+        RadialLength = ReadUInt16BigEndian(span[18..20]);
         AzimuthResolution = span[20];
-        RadialStatus = span[21];
+        RadialStatus = (SweepStatus)span[21];
         ElevationNumber = span[22];
         CutSector = span[23];
-        ElevationAngle = BinaryPrimitives.ReadSingleBigEndian(span[24..28]);
+        ElevationAngle = ReadSingleBigEndian(span[24..28]);
         RadialBlanking = span[28];
         AzimuthMode = (sbyte)span[29];
-        BlockCount = BinaryPrimitives.ReadUInt16BigEndian(span[30..32]);
-
+        BlockCount = ReadUInt16BigEndian(span[30..32]);
 
         // Read block pointers (10 * 4 bytes = 40 bytes)
         _blockPointers = new uint[10];
@@ -161,8 +157,7 @@ public struct RadarDataHeader : IMessageHeader
         var stop = start + 4;
         for (int i = 0; i < 10; i++)
         {
-
-            _blockPointers[i] = BinaryPrimitives.ReadUInt32BigEndian(span[start..stop]);
+            _blockPointers[i] = ReadUInt32BigEndian(span[start..stop]);
             start = stop;
             stop += 4;
         }
@@ -195,19 +190,19 @@ public record VolumeBlock(
     /// </summary>
     /// <param name="span">The span containing the VolumeBlock data</param>
     public VolumeBlock(Span<byte> span) : this(
-        LastRecordTimeUpdatePointer: BinaryPrimitives.ReadUInt16BigEndian(span[0..2]),
+        LastRecordTimeUpdatePointer: ReadUInt16BigEndian(span[0..2]),
         VersionMajor: span[2],
         VersionMinor: span[3],
-        Latitude: BinaryPrimitives.ReadSingleBigEndian(span[4..8]),
-        Longitude: BinaryPrimitives.ReadSingleBigEndian(span[8..12]),
-        Height: (short)BinaryPrimitives.ReadUInt16BigEndian(span[12..14]), // SINT2
-        FeedhornHeight: BinaryPrimitives.ReadUInt16BigEndian(span[14..16]),
-        ReflectivityCalibration: BinaryPrimitives.ReadSingleBigEndian(span[16..20]),
-        PowerHorizontal: BinaryPrimitives.ReadSingleBigEndian(span[20..24]),
-        PowerVertical: BinaryPrimitives.ReadSingleBigEndian(span[24..28]),
-        DifferentialReflectivityCalibration: BinaryPrimitives.ReadSingleBigEndian(span[28..32]),
-        InitialPhase: BinaryPrimitives.ReadSingleBigEndian(span[32..36]),
-        VolumeCoveragePattern: BinaryPrimitives.ReadUInt16BigEndian(span[36..38])
+        Latitude: ReadSingleBigEndian(span[4..8]),
+        Longitude: ReadSingleBigEndian(span[8..12]),
+        Height: (short)ReadUInt16BigEndian(span[12..14]), // SINT2
+        FeedhornHeight: ReadUInt16BigEndian(span[14..16]),
+        ReflectivityCalibration: ReadSingleBigEndian(span[16..20]),
+        PowerHorizontal: ReadSingleBigEndian(span[20..24]),
+        PowerVertical: ReadSingleBigEndian(span[24..28]),
+        DifferentialReflectivityCalibration: ReadSingleBigEndian(span[28..32]),
+        InitialPhase: ReadSingleBigEndian(span[32..36]),
+        VolumeCoveragePattern: ReadUInt16BigEndian(span[36..38])
     // Note: bytes 38-40 are spare and not read
     )
     {
@@ -239,9 +234,9 @@ public record ElevationBlock(
     /// </summary>
     /// <param name="span">The span containing the ElevationBlock data</param>
     public ElevationBlock(Span<byte> span) : this(
-        LastRecordTimeUpdatePointer: BinaryPrimitives.ReadUInt16BigEndian(span[0..2]),
-        AtmosphericAttenuation: (short)BinaryPrimitives.ReadUInt16BigEndian(span[2..4]), // SINT2
-        ReflectivityCalibration: BinaryPrimitives.ReadSingleBigEndian(span[4..8])
+        LastRecordTimeUpdatePointer: ReadUInt16BigEndian(span[0..2]),
+        AtmosphericAttenuation: (short)ReadUInt16BigEndian(span[2..4]), // SINT2
+        ReflectivityCalibration: ReadSingleBigEndian(span[4..8])
     )
     {
         if (span.Length < SizeOf)
@@ -274,14 +269,14 @@ public record RadialBlock(
     /// </summary>
     /// <param name="span">The span containing the RadialBlock data</param>
     public RadialBlock(Span<byte> span) : this(
-        LastRecordTimeUpdatePointer: BinaryPrimitives.ReadUInt16BigEndian(span[0..2]),
-        UnambiguousRange: (short)BinaryPrimitives.ReadUInt16BigEndian(span[2..4]), // SINT2
-        NoiseHorizontal: BinaryPrimitives.ReadSingleBigEndian(span[4..8]),
-        NoiseVertical: BinaryPrimitives.ReadSingleBigEndian(span[8..12]),
-        NyquistVelocity: (short)BinaryPrimitives.ReadUInt16BigEndian(span[12..14]) // SINT2
+        LastRecordTimeUpdatePointer: ReadUInt16BigEndian(span[0..2]),
+        UnambiguousRange: (short)ReadUInt16BigEndian(span[2..4]), // SINT2
+        NoiseHorizontal: ReadSingleBigEndian(span[4..8]),
+        NoiseVertical: ReadSingleBigEndian(span[8..12]),
+        NyquistVelocity: (short)ReadUInt16BigEndian(span[12..14]) // SINT2
     )
     {
-        if (span.Length < SizeOf)
+        if (span.Length != SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
     }
 
@@ -308,20 +303,74 @@ public abstract record DataBlock;
 //     public static ConstantDataBlock FromElevation(ElevationBlock elevation) => new(null, elevation, null);
 //     public static ConstantDataBlock FromRadial(RadialBlock radial) => new(null, null, radial);
 // }
-public sealed record ConstantBlock(VolumeBlock? Volume = null, ElevationBlock? Elevation = null, RadialBlock? Radial = null) : DataBlock
+public sealed record ConstantBlock(VolumeBlock Volume, ElevationBlock Elevation, RadialBlock Radial) : DataBlock
 {
-    public ConstantBlock WithVolume(VolumeBlock volume) => this with { Volume = volume };
-    public ConstantBlock WithElevation(ElevationBlock elevation) => this with { Elevation = elevation };
-    public ConstantBlock WithRadial(RadialBlock radial) => this with { Radial = radial };
-    public ConstantBlock With(DataName dataName, BinaryReader reader) => dataName switch
-    {
-        DataName.VOL => WithVolume(new VolumeBlock(reader.ReadBytes(VolumeBlock.SizeOf))),
-        DataName.ELV => WithElevation(new ElevationBlock(reader.ReadBytes(ElevationBlock.SizeOf))),
-        DataName.RAD => WithRadial(new RadialBlock(reader.ReadBytes(RadialBlock.SizeOf))),
-        _ => throw new ArgumentException($"Unknown constant block type: {dataName}"),
-    };
+    /// <summary>
+    /// Constructs a ConstantBlock by reading all three blocks (VOL, ELV, RAD) from a BinaryReader.
+    /// The reader should be positioned at the start of the VOL block's DATA_BLOCK_HEADER.
+    /// </summary>
+    public ConstantBlock(BinaryReader reader, (uint vol, uint elv, uint rad) positions) : this(ReadBytes(reader, positions))
+    { }
+    private const int CTM_HEADER_OFFSET = 12;
+#if DEBUG
+    private static readonly byte[] VOL_HEADER = Encoding.ASCII.GetBytes("RVOL");
+    private static readonly byte[] ELV_HEADER = Encoding.ASCII.GetBytes("RELV");
+    private static readonly byte[] RAD_HEADER = Encoding.ASCII.GetBytes("RRAD");
+    private const int MESSAGE_HEADER_OFFSET = CTM_HEADER_OFFSET + MessageHeader.SizeOf;
+#else
+    private const int MESSAGE_HEADER_OFFSET = CTM_HEADER_OFFSET + MessageHeader.SizeOf + 4; // 4 bytes for the DATA_BLOCK_HEADER
+#endif
 
+    private static byte[] ReadBytes(BinaryReader reader, (uint vol, uint elv, uint rad) positions)
+    {
+        var bytes = new byte[SizeOf];
+        // Read VOL block (index 0)
+        reader.BaseStream.Position = positions.vol + MESSAGE_HEADER_OFFSET;
+#if DEBUG
+        if (!VOL_HEADER.SequenceEqual(reader.ReadBytes(4))) throw new InvalidOperationException($"Expected RVOL header");
+#endif
+        reader.ReadBytes(VolumeBlock.SizeOf).CopyTo(bytes, 0);
+
+        // Read ELV block (index 1)
+        reader.BaseStream.Position = positions.elv + MESSAGE_HEADER_OFFSET;
+#if DEBUG
+        if (!ELV_HEADER.SequenceEqual(reader.ReadBytes(4))) throw new InvalidOperationException($"Expected RELV header");
+#endif
+        reader.ReadBytes(ElevationBlock.SizeOf).CopyTo(bytes, VolumeBlock.SizeOf);
+
+        // Read RAD block (index 2)
+        reader.BaseStream.Position = positions.rad + MESSAGE_HEADER_OFFSET;
+#if DEBUG
+        if (!RAD_HEADER.SequenceEqual(reader.ReadBytes(4))) throw new InvalidOperationException($"Expected RRAD header");
+#endif
+
+        reader.ReadBytes(RadialBlock.SizeOf).CopyTo(bytes, VolumeBlock.SizeOf + ElevationBlock.SizeOf);
+
+        return bytes;
+    }
+
+    /// <summary>
+    /// Constructs a ConstantBlock from a contiguous byte array containing VOL, ELV, and RAD blocks.
+    /// </summary>
+    public ConstantBlock(byte[] bytes) : this(bytes.AsSpan())
+    { }
+
+    /// <summary>
+    /// Constructs a ConstantBlock from a contiguous Span containing VOL, ELV, and RAD blocks.
+    /// </summary>
+    public ConstantBlock(Span<byte> span) : this(
+        Volume: new VolumeBlock(span[..VolumeBlock.SizeOf]),
+        Elevation: new ElevationBlock(span[VolumeBlock.SizeOf..(VolumeBlock.SizeOf + ElevationBlock.SizeOf)]),
+        Radial: new RadialBlock(span[(VolumeBlock.SizeOf + ElevationBlock.SizeOf)..SizeOf])
+    )
+    {
+        if (span.Length < SizeOf)
+            throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
+    }
+
+    public static int SizeOf => VolumeBlock.SizeOf + ElevationBlock.SizeOf + RadialBlock.SizeOf;
 }
+
 /// <summary>
 /// Variable data blocks (REF, VEL, SW, ZDR, PHI, RHO, CFP).
 /// </summary>
@@ -350,20 +399,20 @@ public record VariableBlock(
     /// <param name="span">The span containing the VariableBlock data</param>
     /// <param name="dataOffset">The data offset (calculated separately, not part of the binary structure)</param>
     public VariableBlock(Span<byte> span, long dataOffset) : this(
-        Reserved: BinaryPrimitives.ReadUInt32BigEndian(span[..4]),
-        NumberOfGates: BinaryPrimitives.ReadUInt16BigEndian(span[4..6]),
-        FirstGate: (short)BinaryPrimitives.ReadUInt16BigEndian(span[6..8]),
-        GateSpacing: (short)BinaryPrimitives.ReadUInt16BigEndian(span[8..10]),
-        Threshold: (short)BinaryPrimitives.ReadUInt16BigEndian(span.Slice(10, 2)),
-        SignalToNoiseRatioThreshold: (short)BinaryPrimitives.ReadUInt16BigEndian(span[12..14]),
+        Reserved: ReadUInt32BigEndian(span[..4]),
+        NumberOfGates: ReadUInt16BigEndian(span[4..6]),
+        FirstGate: (short)ReadUInt16BigEndian(span[6..8]),
+        GateSpacing: (short)ReadUInt16BigEndian(span[8..10]),
+        Threshold: (short)ReadUInt16BigEndian(span.Slice(10, 2)),
+        SignalToNoiseRatioThreshold: (short)ReadUInt16BigEndian(span[12..14]),
         Flags: span[14],
         WordSize: span[15],
-        Scale: BinaryPrimitives.ReadSingleBigEndian(span[16..20]),
-        Offset: BinaryPrimitives.ReadSingleBigEndian(span[20..24]),
+        Scale: ReadSingleBigEndian(span[16..20]),
+        Offset: ReadSingleBigEndian(span[20..24]),
         DataOffset: dataOffset
     )
     {
-        if (span.Length < SizeOf)
+        if (span.Length != SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
     }
 
@@ -373,9 +422,7 @@ public record VariableBlock(
     /// </summary>
     /// <param name="bytes">The byte array containing the VariableBlock data</param>
     /// <param name="dataOffset">The data offset (calculated separately, not part of the binary structure)</param>
-    public VariableBlock(byte[] bytes, long dataOffset) : this(bytes.AsSpan(), dataOffset)
-    {
-    }
+    public VariableBlock(byte[] bytes, long dataOffset) : this(bytes.AsSpan(), dataOffset) { }
     /// <summary>
     /// Reads a VariableBlock from a BinaryReader (big-endian format).
     /// Python equivalent: Parse variable data block (REF, VEL, SW, ZDR, PHI, RHO, CFP).
@@ -400,16 +447,3 @@ public record SweepData(
     int? RecordEnd = null,
     List<int>? IntermediateRecords = null
 );
-/// <summary>
-/// Metadata extracted from NEXRAD file headers without reading sweep data.
-/// </summary>
-public record ScanMetadata
-{
-    public double Elevation { get; init; }
-    public List<string> Quantities { get; init; } = [];
-    public double Latitude { get; init; }
-    public double Longitude { get; init; }
-    public double Height { get; init; }
-    public DateTime Timestamp { get; init; }
-}
-

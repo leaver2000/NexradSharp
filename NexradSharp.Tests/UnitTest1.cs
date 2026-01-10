@@ -20,16 +20,45 @@ public class NexradLevel2ReaderAccessorTests
         using var reader = NexradLevel2Reader.Open(filePath);
 
         // Act
-        var volume = reader[..];
-        foreach (var sweep in volume)
+        NexradLevel2Volume volume;
+        volume = reader[..];
+        Console.WriteLine(volume);
+
+        Assert.True(volume.Count == 10);
+
+        foreach (var (sweepIndex, sweep) in volume)
         {
-            // Console.WriteLine(sweep.ElevationAngle);
-            Console.WriteLine(" TS | EL | Alt | start | scale | Key | NRays | NBins");
-            foreach (var (k, v) in sweep)
+            Assert.IsType<int>(sweepIndex);
+            // assert is subclass of Radar.Sweep<Radar.Field>
+            Assert.IsAssignableFrom<Radar.Sweep<Radar.Field>>(sweep);
+            Assert.IsType<NexradLevel2Sweep>(sweep);
+            foreach (var (fieldName, field) in sweep)
             {
-                Console.WriteLine(sweep);
+                Assert.IsType<FieldName>(fieldName);
+                Assert.IsType<Radar.Field>(field);
             }
         }
+        volume = reader[0..1];
+        Assert.Single(volume);
+        NexradLevel2Sweep s = volume[0];
+        Assert.Equal(0, s.ScanIndex);
+
+
+
+        // Assert.True(sweep.Count == 8);
+        // Assert.True(volume.Keys.Count == 1);
+        // Assert.True(volume.Values.Count == 1);
+        // Assert.True(volume.Keys.First() == 0);
+        // Assert.True(volume.Values.First() is NexradLevel2Sweep);
+        // Assert.True(volume.Values.First().Count == 1);
+        // Assert.True(volume.Values.First().Keys.Count == 1);
+        // Assert.True(volume.Values.First().Values.Count == 1);
+
+
+
+
+
+
 
 
         // Assert
