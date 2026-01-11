@@ -10,14 +10,15 @@ public class NexradLevel2Sweep(
     double elevationAngle,
     double rangeScale,
     double rangeStart
-) : Radar.Sweep<Radar.Field>(data, (scanIndex, startAzimuth, elangle: elevationAngle, rscale: rangeScale, rstart: rangeStart))
+) : Radar.Sweep<Radar.Field>(data, new(scanIndex, startAzimuth, elevationAngle, rangeScale, rangeStart))
 { }
 
 /// <summary>
 /// Provides key-based access to multiple sweeps.
 /// Inherits from Radar.Volume and provides convenient access to data and attributes.
 /// </summary>
-public class NexradLevel2Volume : Radar.Volume<NexradLevel2Sweep>
+public class NexradLevel2Volume(IReadOnlyDictionary<int, NexradLevel2Sweep> data, Radar.VolumeAttributes attributes)
+    : Radar.Volume<NexradLevel2Sweep>(data, attributes)
 {
     public NexradLevel2Volume(
         Dictionary<int, Dictionary<FieldName, Radar.Field>> sweepData,
@@ -28,21 +29,21 @@ public class NexradLevel2Volume : Radar.Volume<NexradLevel2Sweep>
         IReadOnlyList<double> elevationAngles,
         IReadOnlyList<double> startAzimuths,
         Dictionary<int, (short rangeStart, short rangeScale)> sweepRangeInfo
-    ) : base(
+    ) : this(
         CreateSweeps(
             sweepData.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyDictionary<FieldName, Radar.Field>)kvp.Value),
             elevationAngles,
             startAzimuths,
             sweepRangeInfo.ToDictionary()
         ),
-        (datetime, height, latitude, longitude)
+        new Radar.VolumeAttributes { datetime = datetime, height = height, latitude = latitude, longitude = longitude }
     )
     { }
     private static Dictionary<int, NexradLevel2Sweep> CreateSweeps(
         IReadOnlyDictionary<int, IReadOnlyDictionary<FieldName, Radar.Field>> sweepData,
         IReadOnlyList<double> elevationAngles,
         IReadOnlyList<double> startAzimuths,
-        IReadOnlyDictionary<int, (short rangeStart, short rangeScale)> sweepRangeInfo
+        Dictionary<int, (short rangeStart, short rangeScale)> sweepRangeInfo
     )
     {
         return sweepData.ToDictionary(

@@ -1,11 +1,15 @@
 using System.Collections;
 using System.Collections.Generic;
 namespace NexradSharp;
-using ScaleOffset = (float scale, float offset);
-using SweepAttributes = (int scanIndex, double startaz, double elangle, double rscale, double rstart);
-using VolumeAttributes = (DateTime datetime, double height, double latitude, double longitude);
+
 public static class Radar
 {
+#pragma warning disable IDE1006
+    public record struct ScaleOffset(float scale, float offset);
+    public record struct SweepAttributes(int scanIndex, double startaz, double elangle, double rscale, double rstart);
+    public record struct VolumeAttributes(DateTime datetime, double height, double latitude, double longitude);
+#pragma warning restore IDE1006
+
     private interface IRadar<T1, T2>
     {
         public T1 Data { get; }

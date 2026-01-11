@@ -8,7 +8,7 @@ namespace NexradSharp;
 using static System.Buffers.Binary.BinaryPrimitives;
 
 
-public interface IMessageHeader { public SweepStatus GetStatus(); }
+
 
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -67,10 +67,8 @@ public readonly struct MessageHeaderWithMetadata(MessageHeader header, int recor
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public struct RadarDataHeader : IMessageHeader
+public struct RadarDataHeader
 {
-    // [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
-    // private readonly byte[] _idBytes;
     public string Id;
     public uint CollectMilliseconds;
     public ushort CollectDate;
@@ -91,14 +89,7 @@ public struct RadarDataHeader : IMessageHeader
     private readonly uint[] _blockPointers;
     public const int SizeOf = 72;
 
-    // public readonly string Id
-    // {
-    //     get
-    //     {
-    //         if (_idBytes == null) return string.Empty;
-    //         return Encoding.ASCII.GetString(_idBytes, 0, 4).TrimEnd('\0');
-    //     }
-    // }
+
 
     public readonly uint[] BlockPointers
     {
@@ -112,7 +103,7 @@ public struct RadarDataHeader : IMessageHeader
     }
 
 
-    public readonly SweepStatus GetStatus() => RadialStatus;
+
 
 
 
@@ -289,7 +280,7 @@ public record RadialBlock(
 }
 
 /// <summary>
-/// Union type for data blocks stored in Message31DataHeader.
+/// Union type for data blocks stored in VariableBlocks.
 /// </summary>
 public abstract record DataBlock;
 
@@ -443,7 +434,7 @@ public record SweepData(
     RadarDataHeader RadarDataHeader,
     MessageType MessageType,
     ConstantBlock ConstantBlock,
-    Dictionary<DataName, DataBlock> Message31DataHeader,
+    Dictionary<DataName, VariableBlock> VariableBlocks,
     int? RecordEnd = null,
     List<int>? IntermediateRecords = null
 );

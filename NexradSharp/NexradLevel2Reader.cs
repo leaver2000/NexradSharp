@@ -31,19 +31,15 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
 {
     public static NexradLevel2Reader Open(string fileName, bool leaveOpen = false)
     {
-        if (!File.Exists(fileName))
-        {
-            throw new FileNotFoundException(fileName);
-        }
-        var f = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return new NexradLevel2Reader(f, leaveOpen);
+        if (!File.Exists(fileName)) throw new FileNotFoundException(fileName);
+        return new NexradLevel2Reader(File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.Read), leaveOpen);
     }
     #endregion
     // ============================================================================================================= //
     #region Properties
     // ============================================================================================================= //
-    private (List<MessageHeader> dataHeader, List<List<IMessageHeader>> messagesHeader, List<SweepData> messagesDataHeader)? _headers = null;
-    public (List<MessageHeader> dataHeader, List<List<IMessageHeader>> messagesHeader, List<SweepData> messagesDataHeader) Headers
+    private (List<MessageHeader> dataHeader, List<List<RadarDataHeader>> messagesHeader, List<SweepData> messagesDataHeader)? _headers = null;
+    public (List<MessageHeader> dataHeader, List<List<RadarDataHeader>> messagesHeader, List<SweepData> messagesDataHeader) Headers
     {
         get
         {
@@ -52,7 +48,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
         }
     }
     public List<MessageHeader> DataHeader => Headers.dataHeader;
-    public List<List<IMessageHeader>> Message31Headers => Headers.messagesHeader;
+    public List<List<RadarDataHeader>> Message31Headers => Headers.messagesHeader;
     public List<SweepData> Message31DataHeaders => Headers.messagesDataHeader;
     #endregion
 
@@ -664,7 +660,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     /// Python equivalent: get_data_header()
     /// Returns: (data_header, _msg_31_header, _msg_31_data_header)
     /// </summary>
-    public (List<MessageHeader> dataHeader, List<List<IMessageHeader>> messagesHeader, List<SweepData> messagesDataHeader) GetHeaders()
+    public (List<MessageHeader> dataHeader, List<List<RadarDataHeader>> messagesHeader, List<SweepData> messagesDataHeader) GetHeaders()
     {
         // get the record number from the meta header
         // Find the last metadata record (typically RDA_STATUS_DATA, but could be any metadata type)
@@ -700,11 +696,11 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
 
         int currentSweep = -1;
         int currentHeader = -1;
-        var sweepMessageHeaders = new List<IMessageHeader>();
+        var sweepMessageHeaders = new List<RadarDataHeader>();
         var sweepIntermediateRecords = new List<int>();
 
         var dataHeader = new List<MessageHeader>();
-        var messagesHeader = new List<List<IMessageHeader>>();
+        var messagesHeader = new List<List<RadarDataHeader>>();
         var messagesDataHeader = new List<SweepData>();
 
         int maxRecords = 10000; // Safety limit
@@ -721,19 +717,19 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             // keep all data headers
             dataHeader.Add(msgHeader);
 
-            // Only process RadarData (legacy Message1 format is not supported)
-            if (msgHeader.Type == MessageType.GENERIC_FORMAT)
+
+            if (msgHeader.Type == MessageType.GENERIC_FORMAT)                                                           // Generic Radar Data Format
             {
                 // Read the full message header (MSG_31)
-                var messagesHeaderObj = ReadRadarDataHeader();
+                var messagesHdr = ReadRadarDataHeader();
 
                 // retrieve data/const headers from msg 31
                 // check if this is a new sweep
-                SweepStatus status = messagesHeaderObj.GetStatus();
+                SweepStatus status = messagesHdr.RadialStatus;
 
 
 
-                if (status == SweepStatus.INTERMEDIATE_RADIAL) {/** 1 - intermediate radial pass */}
+                if (status == SweepStatus.INTERMEDIATE_RADIAL) {/** 1 - intermediate radial pass */}                    // Intermediate Radial Pass
                 else if (status == SweepStatus.END_ELEVATION || status == SweepStatus.END_VOLUME)
                 {
                     // 2 - end of elevation
@@ -762,23 +758,21 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                     sweepIntermediateRecords = [];
 
                     // new message 31 data
-                    if (messagesHeaderObj is RadarDataHeader messagesHdr)
-                    {
-                        var (constantBlock, variableBlocks) = ParseRadarDataBlocks(messagesHdr);
-                        messagesDataHeader.Add(new SweepData(
-                            RecordNumber: _recordNumber,
-                            FilePosition: _recordStart,
-                            RadarDataHeader: messagesHdr,
-                            MessageType: (MessageType)msgHeader.Type,
-                            ConstantBlock: constantBlock,
-                            Message31DataHeader: variableBlocks
-                        ));
-                    }
+
+                    var (constantBlock, variableBlocks) = ParseRadarDataBlocks(messagesHdr);
+                    messagesDataHeader.Add(new SweepData(
+                        RecordNumber: _recordNumber,
+                        FilePosition: _recordStart,
+                        RadarDataHeader: messagesHdr,
+                        MessageType: msgHeader.Type,
+                        ConstantBlock: constantBlock,
+                        VariableBlocks: variableBlocks
+                    ));
 
 
                 }
 
-                sweepMessageHeaders.Add(messagesHeaderObj);
+                sweepMessageHeaders.Add(messagesHdr);
             }
             else
             {
@@ -850,9 +844,9 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     /// Parse data blocks from Message 31.
     /// Python equivalent: parsing block_pointers and DATA_BLOCK_HEADER
     /// </summary>
-    private (ConstantBlock constantBlock, Dictionary<DataName, DataBlock> variableBlocks) ParseRadarDataBlocks(RadarDataHeader header)
+    private (ConstantBlock constantBlock, Dictionary<DataName, VariableBlock> variableBlocks) ParseRadarDataBlocks(RadarDataHeader header)
     {
-        var variables = new Dictionary<DataName, DataBlock>();
+        var variables = new Dictionary<DataName, VariableBlock>();
 
         var blockPointers = header.BlockPointers.Where(bp => bp > 0).ToArray();
         var nBlocks = Math.Min(blockPointers.Length, header.BlockCount);
@@ -914,7 +908,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
         var altitude = sweep.ConstantBlock.Volume.Height + sweep.ConstantBlock.Volume.FeedhornHeight;
 
         // Extract range start and scale from first VariableBlock
-        var variableBlocks = sweep.Message31DataHeader
+        var variableBlocks = sweep.VariableBlocks
             .Where(kvp => kvp.Value is VariableBlock)
             .Select(kvp => (kvp.Key, (VariableBlock)kvp.Value))
             .ToList();
@@ -944,7 +938,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     {
         var result = new Dictionary<FieldName, Radar.Field>();
 
-        var dataHeader = sweep.Message31DataHeader;
+        var dataHeader = sweep.VariableBlocks;
 
         var startRecord = sweep.RecordNumber;
         var endRecord = sweep.RecordEnd ?? startRecord;
@@ -952,30 +946,27 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
         // Collect intermediate record numbers to skip
         var skipRecords = new HashSet<int>();
         if (sweep.IntermediateRecords != null)
-        {
             skipRecords.UnionWith(sweep.IntermediateRecords);
-        }
+
+
 
         // Identify moments (variable blocks only, constant blocks are stored separately)
         var momentEntries = dataHeader
             .Where(kvp => kvp.Value is VariableBlock)
             .ToDictionary(kvp => kvp.Key, kvp => (VariableBlock)kvp.Value);
 
-        static FieldName MapMomentName(DataName key)
-        {
-            return _nexradMapping.TryGetValue(key, out var mapped) ? mapped : throw new ArgumentException($"Unknown DataName: {key}");
-        }
+
 
         // Prepare per-moment storage for raw quantized values
         var momentRows = momentEntries.ToDictionary(
-            kvp => MapMomentName(kvp.Key),
+            kvp => _nexradMapping[kvp.Key],
             kvp => new List<ushort[]>()
         );
 
         // Store scale/offset for each moment (will be used when creating DataArray)
         var scaleOffsetMap = momentEntries.ToDictionary(
-            kvp => MapMomentName(kvp.Key),
-            kvp => (kvp.Value.Scale, kvp.Value.Offset)
+            kvp => _nexradMapping[kvp.Key],
+            kvp => new Radar.ScaleOffset(kvp.Value.Scale, kvp.Value.Offset)
         );
 
         for (int rec = startRecord; rec <= endRecord; rec++)
@@ -1000,7 +991,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
 
             foreach (var (key, header) in momentEntries)
             {
-                var mappedKey = MapMomentName(key);
+                var mappedKey = _nexradMapping[key];
                 var ngates = header.NumberOfGates;
                 if (ngates == 0) continue;
                 var wordSize = header.WordSize;
@@ -1060,8 +1051,7 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
             }
 
             var span2D = new Span2D<ushort>(flatData, rows.Count, ngates);
-            var attributes = scaleOffsetMap[kvp.Key];
-            result[kvp.Key] = new Radar.Field(span2D, attributes);
+            result[kvp.Key] = new Radar.Field(span2D, scaleOffsetMap[kvp.Key]);
         }
 
         return result;
