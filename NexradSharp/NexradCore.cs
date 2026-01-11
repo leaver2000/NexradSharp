@@ -19,8 +19,6 @@ public class NexradLevel2Sweep(
 /// </summary>
 public class NexradLevel2Volume : Radar.Volume<NexradLevel2Sweep>
 {
-
-
     public NexradLevel2Volume(
         Dictionary<int, Dictionary<FieldName, Radar.Field>> sweepData,
         DateTime datetime,
@@ -35,16 +33,11 @@ public class NexradLevel2Volume : Radar.Volume<NexradLevel2Sweep>
             sweepData.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyDictionary<FieldName, Radar.Field>)kvp.Value),
             elevationAngles,
             startAzimuths,
-            sweepRangeInfo.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+            sweepRangeInfo.ToDictionary()
         ),
         (datetime, height, latitude, longitude)
     )
-    {
-
-
-    }
-
-
+    { }
     private static Dictionary<int, NexradLevel2Sweep> CreateSweeps(
         IReadOnlyDictionary<int, IReadOnlyDictionary<FieldName, Radar.Field>> sweepData,
         IReadOnlyList<double> elevationAngles,

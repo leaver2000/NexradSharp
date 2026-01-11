@@ -20,17 +20,7 @@ public static class Radar
         public ScaleOffset Attributes => attributes;
         public float Scale => attributes.scale;
         public float Offset => attributes.offset;
-        public float[,] Dequantize()
-        {
-            var (nrays, nbins) = data.Shape;
-            var (scale, offset) = attributes;
-            var result = new float[nrays, nbins];
-            for (int i = 0; i < nrays; i++)
-                for (int j = 0; j < nbins; j++)
-                    result[i, j] = (data[i, j] - offset) * scale;
 
-            return result;
-        }
     }
     public class Sweep<T>(IReadOnlyDictionary<FieldName, T> data, SweepAttributes attributes) :
         IReadOnlyDictionary<FieldName, T>,
