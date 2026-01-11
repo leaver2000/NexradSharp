@@ -1,6 +1,9 @@
-﻿using System;
+using System;
 using System.IO;
+using System.Linq;
 using NexradSharp;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace NexradSharp.Tests;
@@ -65,5 +68,48 @@ public class NexradLevel2ReaderAccessorTests
         Assert.NotNull(volume);
         Assert.True(volume.Count > 0);
         Assert.Contains(0, volume.Keys);
+    }
+
+    /// <summary>
+    /// Renders a Radar.Field as an image with dimensions (NRays, NBins).
+    /// Each pixel at [ray, bin] corresponds to data[ray, bin].
+    /// </summary>
+    /// <param name="field">The radar field to render</param>
+    /// <param name="outputPath">Path where the PNG image will be saved</param>
+    internal static void RenderFieldAsImage(Radar.Field field, string outputPath)
+    {
+        var data = field.Data;
+        int nrays = data.NRays;
+        int nbins = data.NBins;
+
+        // Find min and max values for normalization
+        ushort min = ushort.MaxValue;
+        ushort max = ushort.MinValue;
+        for (int ray = 0; ray < nrays; ray++)
+        {
+            for (int bin = 0; bin < nbins; bin++)
+            {
+                var value = data[ray, bin];
+                if (value < min) min = value;
+                if (value > max) max = value;
+            }
+        }
+
+        // Create image with width = nbins, height = nrays
+        using var image = new Image<Rgb24>(nbins, nrays);
+
+        // Map values to grayscale (0-255)
+        float range = max > min ? max - min : 1;
+        for (int ray = 0; ray < nrays; ray++)
+        {
+            for (int bin = 0; bin < nbins; bin++)
+            {
+                var value = data[ray, bin];
+                byte gray = max > min ? (byte)(((value - min) / range) * 255) : (byte)0;
+                image[bin, ray] = new Rgb24(gray, gray, gray);
+            }
+        }
+
+        image.SaveAsPng(outputPath);
     }
 }

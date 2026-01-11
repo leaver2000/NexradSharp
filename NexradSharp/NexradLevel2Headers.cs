@@ -2,14 +2,9 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-
 namespace NexradSharp;
 
 using static System.Buffers.Binary.BinaryPrimitives;
-
-
-
-
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public readonly struct MessageHeader(
@@ -88,9 +83,6 @@ public struct RadarDataHeader
     [MarshalAs(UnmanagedType.ByValArray, SizeConst = 10)]
     private readonly uint[] _blockPointers;
     public const int SizeOf = 72;
-
-
-
     public readonly uint[] BlockPointers
     {
         get
@@ -101,23 +93,14 @@ public struct RadarDataHeader
             return result;
         }
     }
-
-
-
-
-
-
     /// <summary>
     /// Reads a RadarDataHeader from a BinaryReader (big-endian format).
     /// </summary>
     public static RadarDataHeader Read(BinaryReader reader) => new(reader.ReadBytes(SizeOf));
-
-
     /// <summary>
     /// Constructs a RadarDataHeader from a byte array (big-endian format).
     /// </summary>
     public RadarDataHeader(byte[] bytes) : this(bytes.AsSpan()) { }
-
     /// <summary>
     /// Constructs a RadarDataHeader from a Span<byte> (big-endian format).
     /// </summary>
@@ -154,7 +137,6 @@ public struct RadarDataHeader
         }
     }
 }
-
 public record VolumeBlock(
     ushort LastRecordTimeUpdatePointer,
     byte VersionMajor,
@@ -175,7 +157,6 @@ public record VolumeBlock(
     /// Size of the VolumeBlock structure when read from binary data (40 bytes including 2-byte spare).
     /// </summary>
     public const int SizeOf = 40;
-
     /// <summary>
     /// Constructs a VolumeBlock from a Span<byte> (big-endian format).
     /// </summary>
@@ -200,15 +181,7 @@ public record VolumeBlock(
         if (span.Length < SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
     }
-
-    /// <summary>
-    /// Constructs a VolumeBlock from a byte array (big-endian format).
-    /// </summary>
-    /// <param name="bytes">The byte array containing the VolumeBlock data</param>
-    public VolumeBlock(byte[] bytes) : this(bytes.AsSpan()) { }
-    public VolumeBlock(BinaryReader reader) : this(reader.ReadBytes(SizeOf)) { }
 }
-
 public record ElevationBlock(
     ushort LastRecordTimeUpdatePointer,
     short AtmosphericAttenuation,
@@ -219,7 +192,6 @@ public record ElevationBlock(
     /// Size of the ElevationBlock structure when read from binary data (8 bytes).
     /// </summary>
     public const int SizeOf = 8;
-
     /// <summary>
     /// Constructs an ElevationBlock from a Span<byte> (big-endian format).
     /// </summary>
@@ -233,15 +205,7 @@ public record ElevationBlock(
         if (span.Length < SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
     }
-
-    /// <summary>
-    /// Constructs an ElevationBlock from a byte array (big-endian format).
-    /// </summary>
-    /// <param name="bytes">The byte array containing the ElevationBlock data</param>
-    public ElevationBlock(byte[] bytes) : this(bytes.AsSpan()) { }
-    public ElevationBlock(BinaryReader reader) : this(reader.ReadBytes(SizeOf)) { }
 }
-
 public record RadialBlock(
     ushort LastRecordTimeUpdatePointer,
     short UnambiguousRange,
@@ -254,7 +218,6 @@ public record RadialBlock(
     /// Size of the RadialBlock structure when read from binary data (16 bytes including 2-byte spare).
     /// </summary>
     public const int SizeOf = 16;
-
     /// <summary>
     /// Constructs a RadialBlock from a Span<byte> (big-endian format).
     /// </summary>
@@ -270,31 +233,8 @@ public record RadialBlock(
         if (span.Length != SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
     }
-
-    /// <summary>
-    /// Constructs a RadialBlock from a byte array (big-endian format).
-    /// </summary>
-    /// <param name="bytes">The byte array containing the RadialBlock data</param>
-    public RadialBlock(byte[] bytes) : this(bytes.AsSpan()) { }
-    public RadialBlock(BinaryReader reader) : this(reader.ReadBytes(SizeOf)) { }
 }
-
-/// <summary>
-/// Union type for data blocks stored in VariableBlocks.
-/// </summary>
-public abstract record DataBlock;
-
-
-/// <summary>
-/// Constant data blocks (VOL, ELV, RAD).
-// /// </summary>
-// public sealed record ConstantDataBlock(VolumeBlock? Volume, ElevationBlock? Elevation, RadialBlock? Radial) : DataBlock
-// {
-//     public static ConstantDataBlock FromVolume(VolumeBlock volume) => new(volume, null, null);
-//     public static ConstantDataBlock FromElevation(ElevationBlock elevation) => new(null, elevation, null);
-//     public static ConstantDataBlock FromRadial(RadialBlock radial) => new(null, null, radial);
-// }
-public sealed record ConstantBlock(VolumeBlock Volume, ElevationBlock Elevation, RadialBlock Radial) : DataBlock
+public sealed record ConstantBlock(VolumeBlock Volume, ElevationBlock Elevation, RadialBlock Radial)
 {
     /// <summary>
     /// Constructs a ConstantBlock by reading all three blocks (VOL, ELV, RAD) from a BinaryReader.
@@ -311,7 +251,6 @@ public sealed record ConstantBlock(VolumeBlock Volume, ElevationBlock Elevation,
 #else
     private const int MESSAGE_HEADER_OFFSET = CTM_HEADER_OFFSET + MessageHeader.SizeOf + 4; // 4 bytes for the DATA_BLOCK_HEADER
 #endif
-
     private static byte[] ReadBytes(BinaryReader reader, (uint vol, uint elv, uint rad) positions)
     {
         var bytes = new byte[SizeOf];
@@ -321,31 +260,24 @@ public sealed record ConstantBlock(VolumeBlock Volume, ElevationBlock Elevation,
         if (!VOL_HEADER.SequenceEqual(reader.ReadBytes(4))) throw new InvalidOperationException($"Expected RVOL header");
 #endif
         reader.ReadBytes(VolumeBlock.SizeOf).CopyTo(bytes, 0);
-
         // Read ELV block (index 1)
         reader.BaseStream.Position = positions.elv + MESSAGE_HEADER_OFFSET;
 #if DEBUG
         if (!ELV_HEADER.SequenceEqual(reader.ReadBytes(4))) throw new InvalidOperationException($"Expected RELV header");
 #endif
         reader.ReadBytes(ElevationBlock.SizeOf).CopyTo(bytes, VolumeBlock.SizeOf);
-
         // Read RAD block (index 2)
         reader.BaseStream.Position = positions.rad + MESSAGE_HEADER_OFFSET;
 #if DEBUG
         if (!RAD_HEADER.SequenceEqual(reader.ReadBytes(4))) throw new InvalidOperationException($"Expected RRAD header");
 #endif
-
         reader.ReadBytes(RadialBlock.SizeOf).CopyTo(bytes, VolumeBlock.SizeOf + ElevationBlock.SizeOf);
-
         return bytes;
     }
-
     /// <summary>
     /// Constructs a ConstantBlock from a contiguous byte array containing VOL, ELV, and RAD blocks.
     /// </summary>
-    public ConstantBlock(byte[] bytes) : this(bytes.AsSpan())
-    { }
-
+    public ConstantBlock(byte[] bytes) : this(bytes.AsSpan()) { }
     /// <summary>
     /// Constructs a ConstantBlock from a contiguous Span containing VOL, ELV, and RAD blocks.
     /// </summary>
@@ -358,10 +290,8 @@ public sealed record ConstantBlock(VolumeBlock Volume, ElevationBlock Elevation,
         if (span.Length < SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
     }
-
     public static int SizeOf => VolumeBlock.SizeOf + ElevationBlock.SizeOf + RadialBlock.SizeOf;
 }
-
 /// <summary>
 /// Variable data blocks (REF, VEL, SW, ZDR, PHI, RHO, CFP).
 /// </summary>
@@ -377,7 +307,7 @@ public record VariableBlock(
     float Scale,
     float Offset,
     long DataOffset
-) : DataBlock
+)
 {
     /// <summary>
     /// Size of the VariableBlock structure when read from binary data (24 bytes).
@@ -406,8 +336,6 @@ public record VariableBlock(
         if (span.Length != SizeOf)
             throw new ArgumentException($"Span must be at least {SizeOf} bytes", nameof(span));
     }
-
-
     /// <summary>
     /// Constructs a VariableBlock from a byte array (big-endian format).
     /// </summary>
@@ -427,7 +355,6 @@ public record VariableBlock(
         return new VariableBlock(bytes, dataOffset);
     }
 }
-
 public record SweepData(
     int RecordNumber,
     long FilePosition,
@@ -437,4 +364,7 @@ public record SweepData(
     Dictionary<DataName, VariableBlock> VariableBlocks,
     int? RecordEnd = null,
     List<int>? IntermediateRecords = null
-);
+)
+{
+    public int NRays => (RecordEnd ?? 0) - RecordNumber + 1;
+}

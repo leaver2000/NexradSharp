@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.Text;
 using SharpCompress.Compressors.BZip2;
 
@@ -936,37 +936,30 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
     /// </summary>
     private Dictionary<FieldName, Radar.Field> ReadSweepData(SweepData sweep)
     {
-        var result = new Dictionary<FieldName, Radar.Field>();
+        // Console.WriteLine($"Reading sweep data for sweep {sweep.RecordNumber} to {sweep.RecordEnd} {sweep.RecordNumber - sweep.RecordEnd} records");
+        Console.WriteLine($"Sweep {sweep.RecordNumber} has {sweep.NRays} gates");
+        var nrays = sweep.NRays;
 
-        var dataHeader = sweep.VariableBlocks;
+
+        var dataHeader = sweep.VariableBlocks.ToDictionary(kvp => _nexradMapping[kvp.Key], kvp => kvp.Value);
 
         var startRecord = sweep.RecordNumber;
-        var endRecord = sweep.RecordEnd ?? startRecord;
+        var endRecord = sweep.RecordEnd;
+        // Console.WriteLine($"Sweep {sweep.RecordNumber} to {endRecord}");
 
         // Collect intermediate record numbers to skip
         var skipRecords = new HashSet<int>();
         if (sweep.IntermediateRecords != null)
             skipRecords.UnionWith(sweep.IntermediateRecords);
-
-
-
-        // Identify moments (variable blocks only, constant blocks are stored separately)
-        var momentEntries = dataHeader
-            .Where(kvp => kvp.Value is VariableBlock)
-            .ToDictionary(kvp => kvp.Key, kvp => (VariableBlock)kvp.Value);
-
-
-
-        // Prepare per-moment storage for raw quantized values
-        var momentRows = momentEntries.ToDictionary(
-            kvp => _nexradMapping[kvp.Key],
-            kvp => new List<ushort[]>()
+        var momentRows = dataHeader.ToDictionary(
+            kvp => kvp.Key,
+            kvp => new ushort[nrays * kvp.Value.NumberOfGates]
         );
 
         // Store scale/offset for each moment (will be used when creating DataArray)
-        var scaleOffsetMap = momentEntries.ToDictionary(
-            kvp => _nexradMapping[kvp.Key],
-            kvp => new Radar.ScaleOffset(kvp.Value.Scale, kvp.Value.Offset)
+        var scaleOffsetMap = dataHeader.ToDictionary(
+            kvp => kvp.Key,
+            kvp => new Radar.FieldAttributes(kvp.Key, kvp.Value.Scale, kvp.Value.Offset)
         );
 
         for (int rec = startRecord; rec <= endRecord; rec++)
@@ -989,69 +982,45 @@ public class NexradLevel2Reader(Stream input, bool leaveOpen = false) : BinaryRe
                 }
             }
 
-            foreach (var (key, header) in momentEntries)
+
+            foreach (var (key, header) in dataHeader)
             {
-                var mappedKey = _nexradMapping[key];
                 var ngates = header.NumberOfGates;
                 if (ngates == 0) continue;
                 var wordSize = header.WordSize;
-                var dataOffset = header.DataOffset;
 
-                // Position to data offset (relative to record start)
-                long absolutePos;
-                if (dataOffset >= _recordStart && dataOffset < _recordStart + _recordSize)
-                {
-                    absolutePos = dataOffset; // already absolute
-                }
-                else
-                {
-                    absolutePos = _recordStart + dataOffset; // relative
-                }
 
-                reader.BaseStream.Position = absolutePos;
+                var offset = header.DataOffset;
+                reader.BaseStream.Position = offset;
+                if (offset >= _recordStart && offset < _recordStart + _recordSize)
+                    reader.BaseStream.Position += _recordStart;
 
-                var ray = new ushort[ngates];
+
                 if (wordSize == 8) // 8-bit unsigned integer
                 {
                     var bytes = reader.ReadBytes(ngates);
                     for (int i = 0; i < ngates; i++)
-                        ray[i] = bytes[i]; // Store raw quantized value
+                        momentRows[key][i] = bytes[i]; // Add raw quantized value directly
 
                 }
-                else
+                else // 16-bit big-endian
                 {
-                    // 16-bit big-endian
+
                     for (int i = 0; i < ngates; i++)
                     {
                         var b1 = reader.ReadByte();
                         var b2 = reader.ReadByte();
-                        ray[i] = (ushort)((b1 << 8) | b2); // Store raw quantized value
+                        momentRows[key][i] = (ushort)((b1 << 8) | b2); // Add raw quantized value directly
                     }
                 }
-                momentRows[mappedKey].Add(ray);
             }
-
-
             tempReader?.Dispose();
-
         }
-
-        // Convert lists to Span2D and create RadarField instances with attributes
-        foreach (var kvp in momentRows)
+        var result = new Dictionary<FieldName, Radar.Field>();
+        foreach (var (key, data) in momentRows)
         {
-            var rows = kvp.Value;
-            if (rows.Count == 0) continue;
-            var ngates = rows[0].Length;
-
-            // Flatten 2D data into 1D array for Span2D
-            var flatData = new List<ushort>();
-            for (int r = 0; r < rows.Count; r++)
-            {
-                flatData.AddRange(rows[r]);
-            }
-
-            var span2D = new Span2D<ushort>(flatData, rows.Count, ngates);
-            result[kvp.Key] = new Radar.Field(span2D, scaleOffsetMap[kvp.Key]);
+            var ngates = dataHeader[key].NumberOfGates;
+            result[key] = new Radar.Field(data, scaleOffsetMap[key], (nrays, ngates));
         }
 
         return result;

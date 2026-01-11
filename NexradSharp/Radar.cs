@@ -5,7 +5,7 @@ namespace NexradSharp;
 public static class Radar
 {
 #pragma warning disable IDE1006
-    public record struct ScaleOffset(float scale, float offset);
+    public record struct FieldAttributes(FieldName name, float scale, float offset);
     public record struct SweepAttributes(int scanIndex, double startaz, double elangle, double rscale, double rstart);
     public record struct VolumeAttributes(DateTime datetime, double height, double latitude, double longitude);
 #pragma warning restore IDE1006
@@ -16,12 +16,14 @@ public static class Radar
         public T2 Attributes { get; }
     }
 
-    public class Field(Span2D<ushort> data, ScaleOffset attributes) :
-        IRadar<Span2D<ushort>, ScaleOffset>
+    public class Field(Span2D<ushort> data, FieldAttributes attributes) :
+        IRadar<Span2D<ushort>, FieldAttributes>
     {
+        public Field(IEnumerable<ushort> data, FieldAttributes attributes, (int, int) shape) : this(new Span2D<ushort>(data, shape), attributes) { }
         public override string ToString() => $"Field([[{Data[0, 0]}, ...], ..., [..., {Data[^1, ^1]}]], ({data.NRays}, {data.NBins}))";
         public Span2D<ushort> Data => data;
-        public ScaleOffset Attributes => attributes;
+        public FieldAttributes Attributes => attributes;
+        public FieldName Name => attributes.name;
         public float Scale => attributes.scale;
         public float Offset => attributes.offset;
 
